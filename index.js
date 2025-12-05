@@ -1,91 +1,126 @@
+// =======================
+// IMPORTS Y CONFIG
+// =======================
 const express = require("express");
 const { Telegraf } = require("telegraf");
+const axios = require("axios");
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// Variables de entorno
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const VOICEFLOW_API_KEY = process.env.VOICEFLOW_API_KEY;
+const VOICEFLOW_VERSION_ID = process.env.VOICEFLOW_VERSION_ID;
 const PORT = process.env.PORT || 3000;
 
-if (!BOT_TOKEN) {
-  console.error("Falta TELEGRAM_BOT_TOKEN en las variables de entorno");
+// Validaciones básicas
+if (!TELEGRAM_BOT_TOKEN) {
+  console.error("❌ Falta TELEGRAM_BOT_TOKEN en las variables de entorno");
   process.exit(1);
 }
 
-const bot = new Telegraf(BOT_TOKEN);
-const app = express();
+if (!VOICEFLOW_API_KEY) {
+  console.error("❌ Falta VOICEFLOW_API_KEY en las variables de entorno");
+  process.exit(1);
+}
 
-// --- LÓGICA BÁSICA DEL BOT (luego la refinamos para tu hospedaje) --- //
+if (!VOICEFLOW_VERSION_ID) {
+  console.error("❌ Falta VOICEFLOW_VERSION_ID en las variables de entorno");
+  process.exit(1);
+}
 
-bot.start((ctx) => {
-  ctx.reply(
-    "¡Bienvenida/o! Soy el asistente de tu hospedaje.\n\n" +
-      "Escribe /menu para ver opciones como Wifi, acceso, reglamento y recomendaciones."
-  );
+// =======================
+// INICIALIZAR BOT TELEGRAM
+// =======================
+const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+
+// =======================
+// FUNCIÓN: MANDAR MENSAJE A VOICEFLOW
+// =======================
+async function sendToVoiceflow(userId, text) {
+  const url = `https://general-runtime.voiceflow.com/state/${VOICEFLOW_VERSION_ID}/user/${userId}/interact`;
+
+  const body = {
+    action: {
+      type: "text",
+      payload: text,
+    },
+  };
+
+  const headers = {
+    Authorization: `Bearer ${VOICEFLOW_API_KEY}`,
+    "Content-Type": "application/json",
+  };
+
+  const response = await axios.post(url, body, { headers });
+
+  // Voiceflow responde con una lista de "traces"
+  return response.data;
+}
+
+// =======================
+// MANEJAR TODOS LOS TEXTOS DE TELEGRAM
+// =======================
+bot.on("text", async (ctx) => {
+  const userId = String(ctx.from.id);
+  const userText = ctx.message.text;
+
+  console.log(`📩 Mensaje de Telegram (${userId}): ${userText}`);
+
+  try {
+    const traces = await sendToVoiceflow(userId, userText);
+
+    // Recorrer las respuestas de Voiceflow
+    for (const trace of traces) {
+      // Texto normal
+      if (trace.type === "text") {
+        const message = trace.payload?.message;
+        if (message) {
+          console.log(`📤 Respuesta VF (texto): ${message}`);
+          await ctx.reply(message);
+        }
+      }
+
+      // Opcional: si usas "choices" en Voiceflow (botones / opciones)
+      if (trace.type === "choice") {
+        const choices = trace.payload?.choices || [];
+        if (choices.length > 0) {
+          const optionsText = choices.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
+          await ctx.reply(`Opciones:\n${optionsText}`);
+        }
+      }
+
+      // Si Voiceflow manda "end" podrías hacer algo especial, pero no es obligatorio
+      if (trace.type === "end") {
+        console.log(`✅ Conversación finalizada por Voiceflow para user ${userId}`);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error hablando con Voiceflow:", error.response?.data || error.message);
+    await ctx.reply("Hubo un problema al procesar tu mensaje, inténtalo de nuevo en un momento 🙏");
+  }
 });
 
-bot.command("menu", (ctx) => {
-  ctx.reply(
-    "Menú principal:\n\n" +
-      "📶 Wifi\n" +
-      "🔐 Acceso y llaves\n" +
-      "📋 Reglamento\n" +
-      "📍 Recomendaciones locales\n\n" +
-      "Puedes escribir: wifi, llaves, reglamento o recomendaciones."
-  );
-});
-
-bot.hears(/wifi/i, (ctx) => {
-  ctx.reply(
-    "📶 Wifi del hospedaje:\n\n" +
-      "Nombre de red: AQUÍ_EL_NOMBRE\n" +
-      "Contraseña: AQUÍ_LA_CONTRASEÑA"
-  );
-});
-
-bot.hears(/llaves|acceso/i, (ctx) => {
-  ctx.reply(
-    "🔐 Acceso y llaves:\n\n" +
-      "Código de la cerradura: XXXX\n" +
-      "Instrucciones: aquí podemos detallar cómo abrir/cerrar y qué hacer en caso de fallo."
-  );
-});
-
-bot.hears(/reglamento/i, (ctx) => {
-  ctx.reply(
-    "📋 Reglamento básico de la casa:\n\n" +
-      "1. Respeta a los vecinos y mantén el ruido bajo después de las 10 pm.\n" +
-      "2. No se permiten fiestas sin autorización previa.\n" +
-      "3. Cuida mobiliario, toallas y equipo.\n" +
-      "4. Saca la basura en las bolsas designadas.\n" +
-      "5. Cualquier daño repórtalo de inmediato."
-  );
-});
-
-bot.hears(/recomendaciones/i, (ctx) => {
-  ctx.reply(
-    "📍 Recomendaciones locales:\n\n" +
-      "- Restaurante X: ideal para cena romántica.\n" +
-      "- Playa Y: perfecta para ver el atardecer.\n" +
-      "- Supermercado Z: para comprar despensa cerca.\n\n" +
-      "Más adelante puedo mandarte rutas y tips más detallados."
-  );
-});
-
-// --- INICIAR BOT (long polling) --- //
+// =======================
+// INICIAR BOT Y SERVIDOR HTTP
+// =======================
 bot.launch()
-  .then(() => console.log("Bot de Telegram iniciado"))
+  .then(() => {
+    console.log("🤖 Bot de Telegram iniciado correctamente");
+  })
   .catch((err) => {
-    console.error("Error iniciando el bot:", err);
+    console.error("❌ Error iniciando el bot de Telegram:", err);
     process.exit(1);
   });
 
-// --- Servidor HTTP mínimo para que Render esté feliz --- //
+const app = express();
+
 app.get("/", (req, res) => {
-  res.send("Bot de hospedaje corriendo ✅");
+  res.send("Bot de hospedaje + Voiceflow corriendo ✅");
 });
 
 app.listen(PORT, () => {
-  console.log(`Servidor HTTP escuchando en puerto ${PORT}`);
+  console.log(`🌐 Servidor HTTP escuchando en puerto ${PORT}`);
 });
 
-// Parar limpio en Render/Heroku/etc.
+// Manejo de cierre limpio
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
