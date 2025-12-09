@@ -36,23 +36,24 @@ const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 // FUNCIÓN: MANDAR MENSAJE A VOICEFLOW
 // =======================
 async function sendToVoiceflow(userId, text) {
-  const url = `https://general-runtime.voiceflow.com/state/${VOICEFLOW_VERSION_ID}/user/${userId}/interact`;
+  const url = `https://general-runtime.voiceflow.com/state/user/${userId}/interact`;
 
   const body = {
-    action: {
+    request: {
       type: "text",
       payload: text,
     },
   };
 
   const headers = {
-    Authorization: `Bearer ${VOICEFLOW_API_KEY}`,
-    "Content-Type": "application/json",
+    Authorization: VOICEFLOW_API_KEY,   // OJO: sin 'Bearer '
+    versionID: "production",            // o "development" si usas esa versión en VF
+    accept: "application/json",
+    "content-type": "application/json",
   };
 
   const response = await axios.post(url, body, { headers });
 
-  // Voiceflow responde con una lista de "traces"
   return response.data;
 }
 
